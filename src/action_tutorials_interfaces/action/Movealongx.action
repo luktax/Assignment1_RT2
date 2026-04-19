@@ -1,0 +1,5 @@
+float32 goal_position
+---
+int8 result
+---
+float32 current_position

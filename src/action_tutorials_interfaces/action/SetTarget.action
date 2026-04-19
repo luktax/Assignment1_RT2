@@ -1,0 +1,11 @@
+float32 target_x
+float32 target_y
+float32 target_theta
+---
+float32 endposition_x
+float32 endposition_y
+float32 endangle_theta
+---
+float32 current_x
+float32 current_y
+float32 current_theta
