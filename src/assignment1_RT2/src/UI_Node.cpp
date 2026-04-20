@@ -30,7 +30,7 @@ private:
     {
         while(running_ && rclcpp::ok()) {
             std::string input;
-            std::cout << "Enter '1' to set a new target position (x y theta), enter '2' to cancel the current goal or '3' to quit: ";
+            std::cout << "Enter '1' to set a new target position (x y theta), enter '2' to cancel the current goal or '3' to quit: \n";
             std::getline(std::cin, input);
             if (input == "3") {
                 running_ = false;
@@ -106,6 +106,7 @@ private:
     void feedback_callback(rclcpp_action::ClientGoalHandle<action_tutorials_interfaces::action::SetTarget>::SharedPtr, const std::shared_ptr<const action_tutorials_interfaces::action::SetTarget::Feedback> feedback)
     {
         RCLCPP_INFO(this->get_logger(), "Received feedback: current position (x: %.2f, y: %.2f, theta: %.2f)", feedback->current_x, feedback->current_y, feedback->current_theta);
+        std::cout << "Enter '1' to set a new target position (x y theta), enter '2' to cancel the current goal or '3' to quit: \n";
     }
     void result_callback(const rclcpp_action::ClientGoalHandle<action_tutorials_interfaces::action::SetTarget>::WrappedResult & result)
     {
@@ -123,7 +124,9 @@ private:
                 RCLCPP_ERROR(this->get_logger(), "Unknown result code");
                 break;
         }
-        current_goal_handle_.reset(); 
+        current_goal_handle_.reset();
+        std::cout << "Enter '1' to set a new target position (x y theta), enter '2' to cancel the current goal or '3' to quit: \n";
+ 
     }
     void cancel_goal()
     {
