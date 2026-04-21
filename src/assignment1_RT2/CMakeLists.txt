@@ -16,6 +16,14 @@ find_package(rclcpp_components REQUIRED)
 find_package(action_tutorials_interfaces REQUIRED)
 find_package(action_msgs REQUIRED)
 
+find_package(tf2 REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
+
+find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+
 add_library(action_server SHARED
   src/Action_Server.cpp
 )
@@ -29,6 +37,11 @@ ament_target_dependencies(action_server
   rclcpp_components
   action_tutorials_interfaces
   action_msgs
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
+  geometry_msgs
+  nav_msgs
 )
 rclcpp_components_register_node(action_server
   PLUGIN "Action_Server"
