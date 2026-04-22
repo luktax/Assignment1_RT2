@@ -45,5 +45,5 @@ Thumbs.db
 EOF
 
 #PDF
-.pdf
-.gv
+*.pdf
+*.gv
