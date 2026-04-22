@@ -5,6 +5,14 @@
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 
 #include "tf2/utils.h"
+#include "tf2_ros/static_transform_broadcaster.h"
+#include "tf2_ros/transform_broadcaster.h"
+#include "tf2_ros/transform_listener.h"
+#include "tf2_ros/buffer.h"
+#include "geometry_msgs/msg/transform_stamped.hpp"
+#include "tf2/LinearMath/Quaternion.h"
+#include "tf2/LinearMath/Matrix3x3.h"
+
 #include "geometry_msgs/msg/twist.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 
@@ -35,19 +43,41 @@ public:
         // Initialize cmd_vel publisher
         cmd_vel_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
 
+        tf_static_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
+        tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
+        tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
+        tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+
         RCLCPP_INFO(this->get_logger(), "Action_Server has been started.");
     }
 private:
-    // variables
+    // VARIABLES
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub_;
     rclcpp_action::Server<action_tutorials_interfaces::action::SetTarget>::SharedPtr action_server_;
+
+    std::shared_ptr<tf2_ros::StaticTransformBroadcaster> tf_static_broadcaster_;
+    std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
+    std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
+    std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+
+    // robot pose
     double current_x_ = 0.0;
     double current_y_ = 0.0;
     double current_theta_ = 0.0;
-
-    const double ANGLE_TOLERANCE = 0.01;    // gradi
+    // thresholds 
+    const double ANGLE_TOLERANCE = 0.01;    // rad
     const double POSITION_TOLERANCE = 0.05; // metri
+    // control gains
+    double k_linear = 0.5;  // Proportional control gain for linear velocity
+    double k_angular = 0.5; // Proportional control gain for angular velocity
+    // Cartesian error
+    struct CartesianError {
+        double distance;
+        double angle_to_goal;
+        double orientation_err;
+        bool valid;
+    };
 
     // FUNCTIONS
     // Action server callbacks
@@ -77,13 +107,18 @@ private:
         //auto result = std::make_shared<action_tutorials_interfaces::action::SetTarget::Result>();
         auto result = std::make_shared<action_tutorials_interfaces::action::SetTarget::Result>();
 
-
         double target_x = goal->target_x;
         double target_y = goal->target_y;  
-        double target_theta = goal->target_theta;
+        double target_theta = goal->target_theta * M_PI / 180.0;
+
+        bool goal_reached = false;
 
         geometry_msgs::msg::Twist cmd_vel_msg;
 
+        publishGoalFrame(target_x, target_y, target_theta);
+
+
+        /* 
         // Navigation algorithm (rotation + straight-line motion + rotation)
         RCLCPP_INFO(this->get_logger(), "Phase 1: Rotating towards target...");
 
@@ -189,22 +224,103 @@ private:
         RCLCPP_INFO(this->get_logger(), "Phase 3 completed. Position: (x: %.2f, y: %.2f, theta: %.2f°)", 
             current_x_, current_y_, current_theta_);
         stop_robot();
+        */
+
+        // Control loop
+        while (!goal_reached && rclcpp::ok()) {            
+            if (goal_handle->is_canceling()){
+                goal_handle->canceled(result);
+                RCLCPP_INFO(this->get_logger(), "Goal canceled");
+                return; 
+            }
+            CartesianError error = computeCartesiaError();
+            if (!error.valid) {
+                RCLCPP_WARN(this->get_logger(), "Invalid Cartesian error, stopping robot");
+                stop_robot();
+                loop_rate.sleep();
+                continue;
+            }
+            cmd_vel_msg.linear.x = 0;
+            cmd_vel_msg.angular.z = 0;
+
+            if (error.distance > POSITION_TOLERANCE) {
+                // angle factor to reduce linear velocity when the robot is not facing the target
+                double angle_factor = std::cos(error.angle_to_goal);
+                angle_factor = std::max(0.0, angle_factor); // Ensure non-negative
+
+                cmd_vel_msg.linear.x = k_linear * error.distance * angle_factor;
+
+                cmd_vel_msg.angular.z = k_angular * error.angle_to_goal;
+
+                RCLCPP_DEBUG(this->get_logger(), 
+                    "MOVING: dist=%.3f, angle_to_goal=%.3f, factor=%.2f",
+                    error.distance, error.angle_to_goal * 180.0 / M_PI, angle_factor);
+            }
+            else {
+                // If we are close enough to the target position, focus on orientation
+                if (std::abs(error.orientation_err) > ANGLE_TOLERANCE) {
+                    cmd_vel_msg.linear.x = 0.0;
+                    cmd_vel_msg.angular.z = k_angular * error.orientation_err;
+                    RCLCPP_DEBUG(this->get_logger(), 
+                        "ORIENTING: orientation_err=%.3f",
+                        error.orientation_err * 180.0 / M_PI);
+                }
+                else {
+                    // GOAL REACHED
+                    goal_reached = true;
+                    RCLCPP_INFO(this->get_logger(), "Goal reached! Position: (x: %.2f, y: %.2f, theta: %.2f°)", 
+                        current_x_, current_y_, current_theta_ * 180.0 / M_PI);
+                }
+            }
+
+            cmd_vel_msg.linear.x = std::clamp(cmd_vel_msg.linear.x, 0.0, 0.5);
+            cmd_vel_msg.angular.z = std::clamp(cmd_vel_msg.angular.z, -0.5, 0.5);
+            cmd_vel_pub_->publish(cmd_vel_msg);
+
+            loop_rate.sleep();
+        }
         
+        stop_robot();
         result->endposition_x = current_x_;
         result->endposition_y = current_y_;
-        result->endangle_theta = current_theta_;
+        result->endangle_theta = current_theta_ * 180.0 / M_PI;
         goal_handle->succeed(result);
         RCLCPP_INFO(this->get_logger(), "Goal succeeded! Final: (%.2f, %.2f, %.2f°)",
-            current_x_, current_y_, current_theta_ );
+            current_x_, current_y_, current_theta_ * 180.0 / M_PI);
     }
+
     void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg)
     {
         current_x_ = msg->pose.pose.position.x;
         current_y_ = msg->pose.pose.position.y;
-        current_theta_ = tf2::getYaw(msg->pose.pose.orientation);
-        current_theta_ = current_theta_ * 180.0 / M_PI; // Convert to degrees
+        
+        tf2::Quaternion q(
+            msg->pose.pose.orientation.x,
+            msg->pose.pose.orientation.y,
+            msg->pose.pose.orientation.z,
+            msg->pose.pose.orientation.w
+        );
+        double roll, pitch, yaw;
+        tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+        current_theta_ = yaw;
+
+
+        // publish the frame transformation from "world" to "base_footprint"
+        geometry_msgs::msg::TransformStamped transformStamped;
+        transformStamped.header.stamp = msg->header.stamp;
+        transformStamped.header.frame_id = "world";
+        transformStamped.child_frame_id = "base_footprint";
+
+        transformStamped.transform.translation.x = current_x_;
+        transformStamped.transform.translation.y = current_y_;
+        transformStamped.transform.translation.z = 0.0;
+
+        transformStamped.transform.rotation = msg->pose.pose.orientation;
+
+        tf_broadcaster_->sendTransform(transformStamped);
     }
-    void transform_to_robot_frame(double target_x, double target_y, double & transformed_x, double & transformed_y)
+
+    /*void transform_to_robot_frame(double target_x, double target_y, double & transformed_x, double & transformed_y)
     {
         double dx = target_x - current_x_;
         double dy = target_y - current_y_;
@@ -212,13 +328,80 @@ private:
 
         transformed_x = dx * cos(theta_rad) + dy * sin(theta_rad);
         transformed_y = -dx * sin(theta_rad) + dy * cos(theta_rad);
-    }
+    }*/
+
     void stop_robot()
     {
         geometry_msgs::msg::Twist cmd_vel_msg;
         cmd_vel_msg.linear.x = 0.0;
         cmd_vel_msg.angular.z = 0.0;
         cmd_vel_pub_->publish(cmd_vel_msg);
+    }
+
+    void publishGoalFrame(double target_x, double target_y, double target_theta)
+    {
+       // publish the goal frame transformation from "world" to "goal"
+        geometry_msgs::msg::TransformStamped transformStamped;
+        transformStamped.header.stamp = this->now();
+        transformStamped.header.frame_id = "world";
+        transformStamped.child_frame_id = "goal";
+
+        //traslation
+        transformStamped.transform.translation.x = target_x;
+        transformStamped.transform.translation.y = target_y;
+        transformStamped.transform.translation.z = 0.0;
+
+        //rotation
+        tf2::Quaternion q;
+        q.setRPY(0, 0, target_theta); 
+
+        transformStamped.transform.rotation.x = q.x();
+        transformStamped.transform.rotation.y = q.y();
+        transformStamped.transform.rotation.z = q.z();
+        transformStamped.transform.rotation.w = q.w();
+
+        tf_static_broadcaster_->sendTransform(transformStamped);
+    }
+
+    CartesianError computeCartesiaError()
+    {
+        CartesianError error;
+        error.valid = false;
+
+        geometry_msgs::msg::TransformStamped base_to_goal;
+        try {
+            base_to_goal = tf_buffer_->lookupTransform("base_footprint", "goal", tf2::TimePointZero);
+        } catch (tf2::TransformException & ex) {
+            RCLCPP_WARN(this->get_logger(), "Could not transform from 'base_footprint' to 'goal': %s", ex.what());
+            return error;
+        }
+
+        double error_x = base_to_goal.transform.translation.x;
+        double error_y = base_to_goal.transform.translation.y;
+        error.distance = std::sqrt(error_x * error_x + error_y * error_y);
+
+        error.angle_to_goal = std::atan2(error_y, error_x);
+
+        tf2::Quaternion q(
+            base_to_goal.transform.rotation.x,
+            base_to_goal.transform.rotation.y,
+            base_to_goal.transform.rotation.z,
+            base_to_goal.transform.rotation.w);
+        
+        double roll, pitch, yaw;
+        tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+        
+        error.orientation_err = normalizeAngle(yaw);
+
+        error.valid = true;
+        return error;
+    }
+    double normalizeAngle(double angle)
+    {
+        // Normalizza l'angolo tra -180 e 180 gradi
+        while (angle > M_PI) angle -= 2.0 * M_PI;
+        while (angle < -M_PI) angle += 2.0 * M_PI;
+        return angle;
     }
 };
 

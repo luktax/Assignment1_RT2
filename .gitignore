@@ -4,7 +4,7 @@ install/
 log/
 
 #other directories
-bme_gazebo_sensors/
+bme_gazebo_sensors-rt2/
 exercise1_RT2/
 
 # IDE
@@ -43,3 +43,7 @@ Makefile
 .DS_Store
 Thumbs.db
 EOF
+
+#PDF
+.pdf
+.gv
