@@ -103,8 +103,7 @@ private:
         RCLCPP_INFO(this->get_logger(), "Executing goal...");
         rclcpp::Rate loop_rate(10);
         const auto goal = goal_handle->get_goal();
-        //auto feedback = std::make_shared<action_tutorials_interfaces::action::SetTarget::Feedback>();
-        //auto result = std::make_shared<action_tutorials_interfaces::action::SetTarget::Result>();
+        auto feedback = std::make_shared<action_tutorials_interfaces::action::SetTarget::Feedback>();
         auto result = std::make_shared<action_tutorials_interfaces::action::SetTarget::Result>();
 
         double target_x = goal->target_x;
@@ -273,9 +272,14 @@ private:
                 }
             }
 
-            cmd_vel_msg.linear.x = std::clamp(cmd_vel_msg.linear.x, 0.0, 0.5);
-            cmd_vel_msg.angular.z = std::clamp(cmd_vel_msg.angular.z, -0.5, 0.5);
+            cmd_vel_msg.linear.x = std::clamp(cmd_vel_msg.linear.x, 0.0, 1.0);
+            cmd_vel_msg.angular.z = std::clamp(cmd_vel_msg.angular.z, -1.0, 1.0);
             cmd_vel_pub_->publish(cmd_vel_msg);
+
+            feedback->current_x = current_x_;
+            feedback->current_y = current_y_;
+            feedback->current_theta = current_theta_ * 180.0 / M_PI;
+            goal_handle->publish_feedback(feedback);
 
             loop_rate.sleep();
         }
