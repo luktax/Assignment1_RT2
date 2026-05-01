@@ -58,9 +58,9 @@ Also, it is possible to cancel the current goal or to set a new goal while execu
 SetTarget.action
 
 ### TF FRAMES
-world: global reference frame
-base_footprint: robot frame
-goal: desired target pose
+world: global reference frame;
+base_footprint: robot frame;
+goal: desired target pose;
 
 ## How to run
 Three terminals are required:
